@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: url-shortener-redis
+    ports:
+      - "6379:6379"
+  
+  postgres-shard1:
+    image: postgres:15-alpine
+    container_name: url-shortener-shard1
+    environment:
+      POSTGRES_DB: urlshortener
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5432:5432"
+  
+  postgres-shard2:
+    image: postgres:15-alpine
+    container_name: url-shortener-shard2
+    environment:
+      POSTGRES_DB: urlshortener
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5433:5432"
+  
+  postgres-shard3:
+    image: postgres:15-alpine
+    container_name: url-shortener-shard3
+    environment:
+      POSTGRES_DB: urlshortener
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5434:5432"
+  
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: url-shortener-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+  
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: url-shortener-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+  
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: url-shortener-kafka-ui
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8081:8080"
