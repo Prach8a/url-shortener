@@ -2,7 +2,7 @@
 
 ### Because nobody likes giant URLs.
 
-A production-ready URL shortener built with Spring Boot and React, featuring Redis caching, Kafka-powered analytics, QR code generation, and rate limiting.
+A distributed URL shortener built with Spring Boot, PostgreSQL, Redis, and Kafka, featuring QR code generation, click analytics, rate limiting, Bloom filters, and consistent hashing.
 
 ---
 
