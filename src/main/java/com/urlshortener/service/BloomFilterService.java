@@ -22,6 +22,7 @@ public class BloomFilterService {
     
     @PostConstruct
     public void init() {
+        @SuppressWarnings("null")
         Funnel<CharSequence> funnel = Funnels.stringFunnel(StandardCharsets.UTF_8);
 
         bloomFilter = BloomFilter.create(
