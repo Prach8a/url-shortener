@@ -18,7 +18,7 @@ public class UrlShortenerApplication {
                 ║   📍 http://localhost:8080                        ║
                 ║   📊 Kafka UI: http://localhost:8081              ║
                 ║   🔴 Redis: localhost:6379                        ║
-                ║   🐘 PostgreSQL Shards: 5432, 5433, 5434         ║
+                ║   🐘 PostgreSQL localhost:5432                   ║
                 ╚═══════════════════════════════════════════════════╝
                 """);
     }

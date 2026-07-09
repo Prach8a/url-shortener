@@ -47,7 +47,7 @@ Interactive OpenAPI/Swagger documentation for testing and exploration.
 ### Backend
 
 * Spring Boot 3
-* Java 21
+* Java 25
 * PostgreSQL
 * Redis
 * Apache Kafka
@@ -71,7 +71,7 @@ Interactive OpenAPI/Swagger documentation for testing and exploration.
 
 ### Prerequisites
 
-* Java 21+
+* Java 25+
 * Node.js 18+
 * Docker Desktop
 

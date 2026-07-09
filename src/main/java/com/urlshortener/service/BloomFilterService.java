@@ -3,16 +3,16 @@ package com.urlshortener.service;
 import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnel;
 import com.google.common.hash.Funnels;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PostConstruct;
-import java.nio.charset.StandardCharsets;
 
 @Service
 public class BloomFilterService {
     
-    private BloomFilter<String> bloomFilter;
+    private BloomFilter<CharSequence> bloomFilter;
     
     @Value("${app.bloom-filter.expected-insertions:10000000}")
     private long expectedInsertions;
@@ -20,12 +20,9 @@ public class BloomFilterService {
     @Value("${app.bloom-filter.false-positive-probability:0.01}")
     private double fpp;
     
-    @SuppressWarnings("null")
     @PostConstruct
     public void init() {
-        // Funnels.stringFunnel returns a Funnel<CharSequence>; cast safely to Funnel<? super String>
-        @SuppressWarnings("unchecked")
-        Funnel<? super String> funnel = (Funnel<? super String>) (Object) Funnels.stringFunnel(Objects.requireNonNull(StandardCharsets.UTF_8));
+        Funnel<CharSequence> funnel = Funnels.stringFunnel(StandardCharsets.UTF_8);
 
         bloomFilter = BloomFilter.create(
             funnel,
@@ -56,8 +53,6 @@ public class BloomFilterService {
      * Get approximate number of elements inserted
      */
     public long approximateElementCount() {
-        // Guava doesn't expose this directly, but we can estimate
-        // For now, return 0 - we'll track separately if needed
-        return 0;
+        return bloomFilter.approximateElementCount();
     }
 }
