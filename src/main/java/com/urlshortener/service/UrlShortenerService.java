@@ -35,12 +35,9 @@ public class UrlShortenerService {
     @Value("${app.short-code-length:7}")
     private int shortCodeLength;
 
-    /**
-     * Shorten a URL with bloom filter optimization
-     */
     @Transactional
     public String shortenUrl(String longUrl) {
-        // Decode URL if it was encoded (handles special characters)
+        // 1. URL DECODING
         String decodedUrl = longUrl;
         try {
             decodedUrl = URLDecoder.decode(longUrl, StandardCharsets.UTF_8.name());
@@ -50,33 +47,39 @@ public class UrlShortenerService {
             decodedUrl = longUrl;
         }
 
-        // Clean the URL (remove trailing spaces, ensure protocol)
+        // 2. URL CLEANING
         decodedUrl = decodedUrl.trim();
+        
+        // Handle URLs that end with /
+        if (decodedUrl.endsWith("/")) {
+            // Remove trailing slash for consistency
+            decodedUrl = decodedUrl.substring(0, decodedUrl.length() - 1);
+            log.debug("Removed trailing slash: {}", decodedUrl);
+        }
+        
+        // Ensure protocol
         if (!decodedUrl.startsWith("http://") && !decodedUrl.startsWith("https://")) {
             decodedUrl = "https://" + decodedUrl;
+            log.debug("Added https:// protocol: {}", decodedUrl);
         }
 
-        log.info("Shortening URL: {}", decodedUrl);
+        log.info("Processing URL: {}", decodedUrl);
 
-        // Step 1: Check bloom filter first (fast path)
+        // Check bloom filter first
         if (!bloomFilter.mightExist(decodedUrl)) {
-            log.debug("Bloom filter says URL definitely doesn't exist, creating new");
+            log.debug("URL doesn't exist, creating new");
             return createNewShortCode(decodedUrl);
         }
 
-        // Step 2: Bloom filter says "might exist", check database
-        log.debug("Bloom filter says URL might exist, checking database");
-
-        // Check if already exists in database
+        // Check if URL exists in database
         Optional<UrlMapping> existing = repository.findByLongUrl(decodedUrl);
         if (existing.isPresent()) {
             UrlMapping mapping = existing.get();
             
-            // Check if expired
+            // Reactivate expired URLs
             if (mapping.getExpiresAt() != null && 
                 mapping.getExpiresAt().isBefore(LocalDateTime.now())) {
-                log.info("Existing mapping expired, creating new: {}", mapping.getShortCode());
-                // If expired, create a new one (or you can reactivate it)
+                log.info("URL expired, reactivating: {}", mapping.getShortCode());
                 mapping.setExpiresAt(LocalDateTime.now().plusDays(365));
                 mapping.setIsActive(true);
                 repository.save(mapping);
@@ -84,105 +87,86 @@ public class UrlShortenerService {
                 return mapping.getShortCode();
             }
             
-            log.info("Found existing mapping: {}", mapping.getShortCode());
-            // Refresh cache
+            // Reactivate inactive URLs
+            if (!mapping.getIsActive()) {
+                log.info("URL inactive, reactivating: {}", mapping.getShortCode());
+                mapping.setIsActive(true);
+                mapping.setExpiresAt(LocalDateTime.now().plusDays(365));
+                repository.save(mapping);
+                redisService.save(mapping.getShortCode(), decodedUrl);
+                return mapping.getShortCode();
+            }
+            
+            log.info("Found existing URL: {}", mapping.getShortCode());
             redisService.save(mapping.getShortCode(), decodedUrl);
             return mapping.getShortCode();
         }
 
-        // Step 3: Doesn't exist, create new
         return createNewShortCode(decodedUrl);
     }
 
-    /**
-     * Create a new short code for a URL
-     */
     @Transactional
     public String createNewShortCode(String longUrl) {
         log.debug("Creating new short code for: {}", longUrl);
 
-        // Create entity
         UrlMapping mapping = new UrlMapping();
         mapping.setLongUrl(longUrl);
         mapping.setCreatedAt(LocalDateTime.now());
-        mapping.setExpiresAt(LocalDateTime.now().plusDays(365)); // 1 year expiry
+        mapping.setExpiresAt(LocalDateTime.now().plusDays(365));
         mapping.setIsActive(true);
         mapping.setClickCount(0L);
 
-        // Save to get ID
         mapping = repository.save(mapping);
         log.debug("Saved mapping with ID: {}", mapping.getId());
 
-        // Generate short code from ID (Base62)
         String shortCode = encoder.encode(mapping.getId());
-        log.debug("Generated short code: {}", shortCode);
-
-        // Pad if too short
         while (shortCode.length() < shortCodeLength) {
             shortCode = encoder.generateRandomCode(1) + shortCode;
         }
 
-        // Update with real short code
         mapping.setShortCode(shortCode);
         repository.save(mapping);
 
-        // Add to bloom filter (so future lookups are fast)
         bloomFilter.addUrl(longUrl);
-
-        // Cache in Redis
         redisService.save(shortCode, longUrl);
 
-        log.info("✅ Created new short code: {} for URL: {}", shortCode, longUrl);
+        log.info("Created new short code: {} for URL: {}", shortCode, longUrl);
         return shortCode;
     }
 
-    /**
-     * Get original URL from short code
-     * Check order: Redis -> Database -> Write-through to Redis
-     */
     public String getLongUrl(String shortCode) {
         log.debug("Looking up short code: {}", shortCode);
 
-        // Step 1: Check Redis cache
+        // Check Redis cache
         String longUrl = redisService.get(shortCode);
         if (longUrl != null) {
             log.debug("Cache HIT for: {}", shortCode);
-            
-            // Increment click count asynchronously (in database)
             incrementClickCount(shortCode);
-            
             return longUrl;
         }
 
         log.debug("Cache MISS for: {}", shortCode);
 
-        // Step 2: Check database
+        // Check database
         Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
         if (mapping.isPresent()) {
             UrlMapping urlMapping = mapping.get();
 
-            // Check if URL is active
             if (!urlMapping.getIsActive()) {
                 log.warn("URL is inactive: {}", shortCode);
                 return null;
             }
 
-            // Check if expired
             if (urlMapping.getExpiresAt() != null && 
                 urlMapping.getExpiresAt().isBefore(LocalDateTime.now())) {
                 log.warn("URL expired: {}", shortCode);
-                // Optionally deactivate it
                 urlMapping.setIsActive(false);
                 repository.save(urlMapping);
                 return null;
             }
 
             longUrl = urlMapping.getLongUrl();
-
-            // Step 3: Write-through to Redis (for next time)
             redisService.save(shortCode, longUrl);
-
-            // Increment click count
             incrementClickCount(shortCode);
 
             log.info("Retrieved from DB: {} -> {}", shortCode, longUrl);
@@ -193,9 +177,6 @@ public class UrlShortenerService {
         return null;
     }
 
-    /**
-     * Increment click count for a short code
-     */
     @Transactional
     public void incrementClickCount(String shortCode) {
         try {
@@ -206,9 +187,6 @@ public class UrlShortenerService {
         }
     }
 
-    /**
-     * Get statistics for a short code
-     */
     public Map<String, Object> getStats(String shortCode) {
         Map<String, Object> stats = new HashMap<>();
         
@@ -226,31 +204,6 @@ public class UrlShortenerService {
         return stats;
     }
 
-    /**
-     * Check if a short code exists and is valid
-     */
-    public boolean isValidShortCode(String shortCode) {
-        Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
-        if (mapping.isEmpty()) {
-            return false;
-        }
-        
-        UrlMapping urlMapping = mapping.get();
-        if (!urlMapping.getIsActive()) {
-            return false;
-        }
-        
-        if (urlMapping.getExpiresAt() != null && 
-            urlMapping.getExpiresAt().isBefore(LocalDateTime.now())) {
-            return false;
-        }
-        
-        return true;
-    }
-
-    /**
-     * Delete a short URL (soft delete - just deactivate it)
-     */
     @Transactional
     public boolean deleteShortUrl(String shortCode) {
         Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
@@ -265,9 +218,6 @@ public class UrlShortenerService {
         return false;
     }
 
-    /**
-     * Extend expiry date for a short URL
-     */
     @Transactional
     public boolean extendExpiry(String shortCode, int days) {
         Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
@@ -280,5 +230,33 @@ public class UrlShortenerService {
             return true;
         }
         return false;
+    }
+
+    public boolean isValidShortCode(String shortCode) {
+        Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
+        if (mapping.isEmpty()) {
+            return false;
+        }
+        UrlMapping urlMapping = mapping.get();
+        if (!urlMapping.getIsActive()) {
+            return false;
+        }
+        if (urlMapping.getExpiresAt() != null && 
+            urlMapping.getExpiresAt().isBefore(LocalDateTime.now())) {
+            return false;
+        }
+        return true;
+    }
+
+    public long getTodayCount() {
+        return repository.countByCreatedAtAfter(LocalDateTime.now().minusDays(1));
+    }
+
+    @Transactional
+    public int deactivateExpiredUrls() {
+        LocalDateTime now = LocalDateTime.now();
+        repository.deactivateExpiredUrls(now);
+        log.info("Deactivated expired URLs");
+        return 0;
     }
 }
