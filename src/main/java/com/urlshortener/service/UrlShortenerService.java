@@ -137,17 +137,16 @@ public class UrlShortenerService {
     public String getLongUrl(String shortCode) {
         log.debug("Looking up short code: {}", shortCode);
 
-        // Check Redis cache
+        // Step 1: Check Redis cache (fast)
         String longUrl = redisService.get(shortCode);
         if (longUrl != null) {
             log.debug("Cache HIT for: {}", shortCode);
+            // Increment click count asynchronously
             incrementClickCount(shortCode);
             return longUrl;
         }
 
-        log.debug("Cache MISS for: {}", shortCode);
-
-        // Check database
+        // Step 2: Check database (slower)
         Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
         if (mapping.isPresent()) {
             UrlMapping urlMapping = mapping.get();
@@ -166,7 +165,11 @@ public class UrlShortenerService {
             }
 
             longUrl = urlMapping.getLongUrl();
+
+            // Step 3: Cache in Redis for future requests
             redisService.save(shortCode, longUrl);
+
+            // Increment click count
             incrementClickCount(shortCode);
 
             log.info("Retrieved from DB: {} -> {}", shortCode, longUrl);

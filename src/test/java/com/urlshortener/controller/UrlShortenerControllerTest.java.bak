@@ -1,0 +1,242 @@
+package com.urlshortener.controller;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.urlshortener.dto.ShortenRequest;
+import com.urlshortener.dto.ShortenResponse;
+import com.urlshortener.service.KafkaProducerService;
+import com.urlshortener.service.QrCodeService;
+import com.urlshortener.service.RateLimiterService;
+import com.urlshortener.service.UrlShortenerService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(UrlShortenerController.class)
+class UrlShortenerControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @MockBean
+    private UrlShortenerService urlShortenerService;
+
+    @MockBean
+    private RateLimiterService rateLimiterService;
+
+    @MockBean
+    private KafkaProducerService kafkaProducerService;
+
+    @MockBean
+    private QrCodeService qrCodeService;
+
+    private final String TEST_URL = "https://www.youtube.com/watch?v=2hkonPrhGZA";
+    private final String TEST_SHORT_CODE = "abc1234";
+    private final String BASE_URL = "http://localhost:8080";
+
+    @BeforeEach
+    void setUp() {
+        when(rateLimiterService.allowRequest(anyString(), anyInt(), anyInt())).thenReturn(true);
+    }
+
+    // 1. SHORTEN URL TESTS
+    @Test
+    void shouldShortenUrl() throws Exception {
+        // Given
+        ShortenRequest request = new ShortenRequest();
+        request.setLongUrl(TEST_URL);
+        request.setExpiryDays(30);
+        request.setGenerateQr(false);
+
+        ShortenResponse response = ShortenResponse.builder()
+            .shortUrl(BASE_URL + "/" + TEST_SHORT_CODE)
+            .shortCode(TEST_SHORT_CODE)
+            .longUrl(TEST_URL)
+            .expiryDays(30)
+            .build();
+
+        when(urlShortenerService.shortenUrl(TEST_URL)).thenReturn(TEST_SHORT_CODE);
+
+        // When & Then
+        mockMvc.perform(post("/api/v1/shorten")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.shortCode").value(TEST_SHORT_CODE))
+            .andExpect(jsonPath("$.longUrl").value(TEST_URL));
+    }
+
+    @Test
+    void shouldShortenUrlWithQRCode() throws Exception {
+        // Given
+        ShortenRequest request = new ShortenRequest();
+        request.setLongUrl(TEST_URL);
+        request.setGenerateQr(true);
+
+        String qrBase64 = "iVBORw0KGgoAAAANSUhEUgAA...";
+
+        when(urlShortenerService.shortenUrl(TEST_URL)).thenReturn(TEST_SHORT_CODE);
+        when(qrCodeService.generateQrCodeBase64(anyString())).thenReturn(qrBase64);
+
+        // When & Then
+        mockMvc.perform(post("/api/v1/shorten")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.qrCodeBase64").exists());
+    }
+
+    @Test
+    void shouldReturnBadRequestWhenUrlEmpty() throws Exception {
+        // Given
+        ShortenRequest request = new ShortenRequest();
+        request.setLongUrl("");
+        request.setExpiryDays(30);
+
+        // When & Then
+        mockMvc.perform(post("/api/v1/shorten")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("URL cannot be empty"));
+    }
+
+    @Test
+    void shouldReturnBadRequestWhenUrlInvalid() throws Exception {
+        // Given
+        ShortenRequest request = new ShortenRequest();
+        request.setLongUrl("not-a-valid-url");
+
+        // When & Then
+        mockMvc.perform(post("/api/v1/shorten")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("Invalid URL format. Please include http:// or https://"));
+    }
+
+    @Test
+    void shouldReturnRateLimitExceeded() throws Exception {
+        // Given
+        when(rateLimiterService.allowRequest(anyString(), anyInt(), anyInt())).thenReturn(false);
+
+        ShortenRequest request = new ShortenRequest();
+        request.setLongUrl(TEST_URL);
+
+        // When & Then
+        mockMvc.perform(post("/api/v1/shorten")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(jsonPath("$.error").value("Too many requests. Rate limit exceeded."));
+    }
+
+    // 2. REDIRECT TESTS
+    @Test
+    void shouldRedirectToLongUrl() throws Exception {
+        // Given
+        when(urlShortenerService.getLongUrl(TEST_SHORT_CODE)).thenReturn(TEST_URL);
+
+        // When & Then
+        mockMvc.perform(get("/" + TEST_SHORT_CODE))
+            .andExpect(status().isFound())
+            .andExpect(header().string("Location", TEST_URL));
+    }
+
+    @Test
+    void shouldReturn404WhenShortCodeNotFound() throws Exception {
+        // Given
+        when(urlShortenerService.getLongUrl("nonexistent")).thenReturn(null);
+
+        // When & Then
+        mockMvc.perform(get("/nonexistent"))
+            .andExpect(status().isNotFound());
+    }
+
+    // 3. STATS TESTS
+    @Test
+    void shouldGetStats() throws Exception {
+        // Given
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("click_count", 10L);
+        stats.put("long_url", TEST_URL);
+        stats.put("short_code", TEST_SHORT_CODE);
+        stats.put("is_active", true);
+
+        when(urlShortenerService.getStats(TEST_SHORT_CODE)).thenReturn(stats);
+
+        // When & Then
+        mockMvc.perform(get("/api/v1/stats/" + TEST_SHORT_CODE))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.click_count").value(10))
+            .andExpect(jsonPath("$.long_url").value(TEST_URL));
+    }
+
+    @Test
+    void shouldReturn404WhenStatsNotFound() throws Exception {
+        // Given
+        when(urlShortenerService.getStats("nonexistent")).thenReturn(new HashMap<>());
+
+        // When & Then
+        mockMvc.perform(get("/api/v1/stats/nonexistent"))
+            .andExpect(status().isNotFound());
+    }
+
+    // 4. DELETE TESTS
+    @Test
+    void shouldDeleteUrl() throws Exception {
+        // Given
+        when(urlShortenerService.deleteShortUrl(TEST_SHORT_CODE)).thenReturn(true);
+
+        // When & Then
+        mockMvc.perform(delete("/api/v1/" + TEST_SHORT_CODE))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.message").value("URL deactivated successfully"));
+    }
+
+    @Test
+    void shouldReturn404WhenDeletingNonExistentUrl() throws Exception {
+        // Given
+        when(urlShortenerService.deleteShortUrl("nonexistent")).thenReturn(false);
+
+        // When & Then
+        mockMvc.perform(delete("/api/v1/nonexistent"))
+            .andExpect(status().isNotFound());
+    }
+
+    // 5. EXTEND EXPIRY TESTS
+    @Test
+    void shouldExtendExpiry() throws Exception {
+        // Given
+        when(urlShortenerService.extendExpiry(TEST_SHORT_CODE, 90)).thenReturn(true);
+
+        // When & Then
+        mockMvc.perform(put("/api/v1/" + TEST_SHORT_CODE + "/extend")
+                .param("days", "90"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.message").value("Expiry extended by 90 days"));
+    }
+
+    @Test
+    void shouldReturnBadRequestWhenDaysInvalid() throws Exception {
+        // When & Then
+        mockMvc.perform(put("/api/v1/" + TEST_SHORT_CODE + "/extend")
+                .param("days", "0"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("Days must be greater than 0"));
+    }
+}

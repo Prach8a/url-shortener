@@ -42,7 +42,21 @@ public class UrlShortenerController {
     
     @Value("${app.base-url}")
     private String baseUrl;
-    
+
+    @GetMapping("/api/v1/health")
+    public ResponseEntity<Map<String, Object>> health() {
+        return ResponseEntity.ok(Map.of(
+            "status", "UP",
+            "timestamp", LocalDateTime.now().toString(),
+            "service", "URL Shortener"
+        ));
+    }
+
+    @GetMapping("/ping")
+    public ResponseEntity<String> ping() {
+        return ResponseEntity.ok("pong");
+    }
+        
     @PostMapping("/api/v1/shorten")
     public ResponseEntity<?> shortenUrl(@RequestBody ShortenRequest request, HttpServletRequest httpRequest) {
         String clientIp = getClientIp(httpRequest);

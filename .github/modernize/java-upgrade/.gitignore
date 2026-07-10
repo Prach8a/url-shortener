@@ -1,0 +1,191 @@
+# ================================
+# Java / Maven
+# ================================
+*.class
+*.log
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+*.iml
+*.iws
+*.ipr
+*.lock
+*.tmp
+*.swp
+*.swo
+*.~*
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# ================================
+# Spring Boot
+# ================================
+application-local.properties
+application-dev.properties
+application-prod.properties
+!application-example.properties
+!application-test.properties
+spring-boot-devtools.properties
+*.pid
+
+# ================================
+# IDE / Editor
+# ================================
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+.externalToolBuilders/
+*.launch
+*.prefs
+*.bak
+
+# Eclipse
+.metadata/
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.loadpath
+
+# VS Code
+.vscode/
+*.code-workspace
+.history/
+*.user
+*.user.*
+!*.user.js
+
+# ================================
+# Node / Frontend
+# ================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+frontend/node_modules/
+frontend/package-lock.json
+frontend/.env
+frontend/.env.local
+frontend/build/
+frontend/dist/
+frontend/.cache/
+frontend-backup/
+
+# ================================
+# Database
+# ================================
+*.db
+*.h2.db
+*.mv.db
+*.trace.db
+*.lck
+data/
+h2/
+target/test-classes/data/
+
+# ================================
+# System / OS
+# ================================
+.DS_Store
+Thumbs.db
+desktop.ini
+.Trash-*
+.ehthumbs.db
+*.swp
+*.swo
+~$*
+*.bak
+*.backup
+
+# ================================
+# Docker
+# ================================
+*.pid
+docker-compose.override.yml
+.env
+.dockerignore
+!Dockerfile
+!docker-compose.yml
+
+# ================================
+# Logs
+# ================================
+logs/
+*.log
+*.out
+nohup.out
+*.log.*
+!*/.gitkeep
+!.gitkeep
+
+# ================================
+# Application Specific
+# ================================
+*.secret
+*.key
+*.pem
+*.crt
+*.csr
+application-secrets.properties
+.env
+.env.*
+!.env.example
+
+# ================================
+# Temporary / Backup
+# ================================
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*~
+*.swp
+*.swo
+.*.swp
+.*.swo
+frontend-backup/
+
+# ================================
+# Test Output
+# ================================
+target/surefire-reports/
+target/failsafe-reports/
+target/jacoco.exec
+target/site/
+target/test-classes/
+*.test
+*.testng
+target/generated-test-sources/
+
+# ================================
+# Railway / Deployment
+# ================================
+railway.json
+.railway/
