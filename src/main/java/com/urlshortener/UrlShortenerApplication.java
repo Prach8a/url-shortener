@@ -5,20 +5,16 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration;
 import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.scheduling.annotation.EnableScheduling;
-
 
 @SpringBootApplication(exclude = {
     RedisAutoConfiguration.class,
     KafkaAutoConfiguration.class
 })
 @EnableAsync
-@EnableScheduling
 public class UrlShortenerApplication {
     public static void main(String[] args) {
         SpringApplication.run(UrlShortenerApplication.class, args);
         // System.out.println("""
-        
         // ╔═══════════════════════════════════════════════════╗
         // ║   🚀 URL Shortener Application Started!           ║
         // ║   📍 http://localhost:8080                        ║
@@ -27,6 +23,5 @@ public class UrlShortenerApplication {
         // ║   🐘 PostgreSQL localhost:5432                    ║
         // ╚═══════════════════════════════════════════════════╝
         // """);
-
-}
+    }
 }

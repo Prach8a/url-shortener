@@ -23,7 +23,7 @@ public class UrlShortenerService {
     @Autowired
     private UrlMappingRepository repository;
 
-    @Autowired
+    @Autowired(required = false)
     private RedisService redisService;
 
     @Autowired
@@ -37,7 +37,6 @@ public class UrlShortenerService {
 
     @Transactional
     public String shortenUrl(String longUrl) {
-        // 1. URL DECODING
         String decodedUrl = longUrl;
         try {
             decodedUrl = URLDecoder.decode(longUrl, StandardCharsets.UTF_8.name());
@@ -47,17 +46,13 @@ public class UrlShortenerService {
             decodedUrl = longUrl;
         }
 
-        // 2. URL CLEANING
         decodedUrl = decodedUrl.trim();
         
-        // Handle URLs that end with /
         if (decodedUrl.endsWith("/")) {
-            // Remove trailing slash for consistency
             decodedUrl = decodedUrl.substring(0, decodedUrl.length() - 1);
             log.debug("Removed trailing slash: {}", decodedUrl);
         }
         
-        // Ensure protocol
         if (!decodedUrl.startsWith("http://") && !decodedUrl.startsWith("https://")) {
             decodedUrl = "https://" + decodedUrl;
             log.debug("Added https:// protocol: {}", decodedUrl);
@@ -65,40 +60,42 @@ public class UrlShortenerService {
 
         log.info("Processing URL: {}", decodedUrl);
 
-        // Check bloom filter first
         if (!bloomFilter.mightExist(decodedUrl)) {
             log.debug("URL doesn't exist, creating new");
             return createNewShortCode(decodedUrl);
         }
 
-        // Check if URL exists in database
         Optional<UrlMapping> existing = repository.findByLongUrl(decodedUrl);
         if (existing.isPresent()) {
             UrlMapping mapping = existing.get();
             
-            // Reactivate expired URLs
             if (mapping.getExpiresAt() != null && 
                 mapping.getExpiresAt().isBefore(LocalDateTime.now())) {
                 log.info("URL expired, reactivating: {}", mapping.getShortCode());
                 mapping.setExpiresAt(LocalDateTime.now().plusDays(365));
                 mapping.setIsActive(true);
                 repository.save(mapping);
-                redisService.save(mapping.getShortCode(), decodedUrl);
+                if (redisService != null) {
+                    redisService.save(mapping.getShortCode(), decodedUrl);
+                }
                 return mapping.getShortCode();
             }
             
-            // Reactivate inactive URLs
             if (!mapping.getIsActive()) {
                 log.info("URL inactive, reactivating: {}", mapping.getShortCode());
                 mapping.setIsActive(true);
                 mapping.setExpiresAt(LocalDateTime.now().plusDays(365));
                 repository.save(mapping);
-                redisService.save(mapping.getShortCode(), decodedUrl);
+                if (redisService != null) {
+                    redisService.save(mapping.getShortCode(), decodedUrl);
+                }
                 return mapping.getShortCode();
             }
             
             log.info("Found existing URL: {}", mapping.getShortCode());
-            redisService.save(mapping.getShortCode(), decodedUrl);
+            if (redisService != null) {
+                redisService.save(mapping.getShortCode(), decodedUrl);
+            }
             return mapping.getShortCode();
         }
 
@@ -128,7 +125,9 @@ public class UrlShortenerService {
         repository.save(mapping);
 
         bloomFilter.addUrl(longUrl);
-        redisService.save(shortCode, longUrl);
+        if (redisService != null) {
+            redisService.save(shortCode, longUrl);
+        }
 
         log.info("Created new short code: {} for URL: {}", shortCode, longUrl);
         return shortCode;
@@ -137,16 +136,17 @@ public class UrlShortenerService {
     public String getLongUrl(String shortCode) {
         log.debug("Looking up short code: {}", shortCode);
 
-        // Step 1: Check Redis cache (fast)
-        String longUrl = redisService.get(shortCode);
-        if (longUrl != null) {
-            log.debug("Cache HIT for: {}", shortCode);
-            // Increment click count asynchronously
-            incrementClickCount(shortCode);
-            return longUrl;
+        // Try Redis if available
+        if (redisService != null) {
+            String longUrl = redisService.get(shortCode);
+            if (longUrl != null) {
+                log.debug("Cache HIT for: {}", shortCode);
+                incrementClickCount(shortCode);
+                return longUrl;
+            }
         }
 
-        // Step 2: Check database (slower)
+        // Check database
         Optional<UrlMapping> mapping = repository.findByShortCode(shortCode);
         if (mapping.isPresent()) {
             UrlMapping urlMapping = mapping.get();
@@ -164,12 +164,12 @@ public class UrlShortenerService {
                 return null;
             }
 
-            longUrl = urlMapping.getLongUrl();
+            String longUrl = urlMapping.getLongUrl();
 
-            // Step 3: Cache in Redis for future requests
-            redisService.save(shortCode, longUrl);
+            if (redisService != null) {
+                redisService.save(shortCode, longUrl);
+            }
 
-            // Increment click count
             incrementClickCount(shortCode);
 
             log.info("Retrieved from DB: {} -> {}", shortCode, longUrl);
@@ -214,7 +214,9 @@ public class UrlShortenerService {
             UrlMapping urlMapping = mapping.get();
             urlMapping.setIsActive(false);
             repository.save(urlMapping);
-            redisService.delete(shortCode);
+            if (redisService != null) {
+                redisService.delete(shortCode);
+            }
             log.info("Deactivated short code: {}", shortCode);
             return true;
         }

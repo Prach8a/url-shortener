@@ -25,7 +25,7 @@ import java.util.Map;
 
 @Slf4j
 @RestController
-@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001"})
+@CrossOrigin(origins = {"http://localhost:3000", "http://localhost:3001", "*"})
 public class UrlShortenerController {
     
     @Autowired
@@ -34,7 +34,7 @@ public class UrlShortenerController {
     @Autowired
     private RateLimiterService rateLimiterService;
     
-    @Autowired
+    @Autowired(required = false)
     private KafkaProducerService kafkaProducerService;
     
     @Autowired
@@ -48,7 +48,8 @@ public class UrlShortenerController {
         return ResponseEntity.ok(Map.of(
             "status", "UP",
             "timestamp", LocalDateTime.now().toString(),
-            "service", "URL Shortener"
+            "service", "URL Shortener",
+            "version", "1.0.0"
         ));
     }
 
@@ -61,27 +62,22 @@ public class UrlShortenerController {
     public ResponseEntity<?> shortenUrl(@RequestBody ShortenRequest request, HttpServletRequest httpRequest) {
         String clientIp = getClientIp(httpRequest);
         
-        // Rate limiting
         if (!rateLimiterService.allowRequest(clientIp, 10, 20)) {
             return ResponseEntity.status(429)
                 .body(Map.of("error", "Too many requests. Rate limit exceeded."));
         }
         
         try {
-            // Get raw URL
             String rawUrl = request.getLongUrl();
             
-            // Validate not empty
             if (rawUrl == null || rawUrl.trim().isEmpty()) {
                 return ResponseEntity.badRequest()
                     .body(Map.of("error", "URL cannot be empty"));
             }
             
-            // Decode URL (handles special characters: ?, =, &, etc.)
             String decodedUrl = URLDecoder.decode(rawUrl, StandardCharsets.UTF_8);
             decodedUrl = decodedUrl.trim();
             
-            // Validate URL format
             if (!isValidUrl(decodedUrl)) {
                 return ResponseEntity.badRequest()
                     .body(Map.of("error", "Invalid URL format. Please include http:// or https://"));
@@ -89,11 +85,9 @@ public class UrlShortenerController {
             
             log.info("Received: {} -> Decoded: {}", rawUrl, decodedUrl);
             
-            // Shorten the URL
             String shortCode = urlShortenerService.shortenUrl(decodedUrl);
             String shortUrl = baseUrl + "/" + shortCode;
             
-            // Build response
             ShortenResponse response = ShortenResponse.builder()
                 .shortUrl(shortUrl)
                 .shortCode(shortCode)
@@ -101,7 +95,6 @@ public class UrlShortenerController {
                 .expiryDays(request.getExpiryDays())
                 .build();
             
-            // Generate QR if requested
             if (request.getGenerateQr() != null && request.getGenerateQr()) {
                 String qrBase64 = qrCodeService.generateQrCodeBase64(shortUrl);
                 response.setQrCodeBase64(qrBase64);
@@ -117,53 +110,56 @@ public class UrlShortenerController {
     }
     
     @GetMapping("/{shortCode}")
-    public ResponseEntity<?> redirect(@PathVariable String shortCode, HttpServletRequest request, HttpServletResponse response) {
+    public void redirect(@PathVariable String shortCode, 
+                         HttpServletRequest request, 
+                         HttpServletResponse response) throws Exception {
         try {
             log.info("Redirecting short code: {}", shortCode);
             
-            // Get the long URL
+            // Skip favicon
+            if (shortCode.equals("favicon.ico")) {
+                response.setStatus(HttpStatus.NOT_FOUND.value());
+                return;
+            }
+            
             String longUrl = urlShortenerService.getLongUrl(shortCode);
             
             if (longUrl == null) {
                 log.warn("Short code not found or inactive: {}", shortCode);
-                return ResponseEntity.notFound().build();
+                response.sendError(HttpStatus.NOT_FOUND.value(), "URL not found");
+                return;
             }
             
             log.info("Redirecting {} to: {}", shortCode, longUrl);
             
-            // Track click event
-            ClickEvent event = ClickEvent.builder()
-                .shortCode(shortCode)
-                .longUrl(longUrl)
-                .ipAddress(getClientIp(request))
-                .userAgent(request.getHeader("User-Agent"))
-                .referer(request.getHeader("Referer"))
-                .timestamp(LocalDateTime.now())
-                .build();
-            
-            kafkaProducerService.sendClickEvent(event);
-            
-            // Create URI - handle special characters
-            URI redirectUri;
-            try {
-                // Try to create URI directly
-                redirectUri = new URI(longUrl);
-            } catch (URISyntaxException e) {
-                // If URI creation fails, encode the URL
-                log.warn("URI creation failed, encoding URL: {}", e.getMessage());
-                String encodedUrl = longUrl.replace(" ", "%20");
-                redirectUri = new URI(encodedUrl);
+            // Track click event (only if Kafka is available)
+            if (kafkaProducerService != null) {
+                try {
+                    ClickEvent event = ClickEvent.builder()
+                        .shortCode(shortCode)
+                        .longUrl(longUrl)
+                        .ipAddress(getClientIp(request))
+                        .userAgent(request.getHeader("User-Agent"))
+                        .referer(request.getHeader("Referer"))
+                        .timestamp(LocalDateTime.now())
+                        .build();
+                    kafkaProducerService.sendClickEvent(event);
+                } catch (Exception e) {
+                    log.warn("Kafka not available, skipping click tracking: {}", e.getMessage());
+                }
             }
             
-            // Send redirect with proper status
+            // Redirect immediately
             response.setStatus(HttpStatus.FOUND.value());
-            response.setHeader("Location", redirectUri.toString());
-            return null; // Let Spring handle the response
+            response.setHeader("Location", longUrl);
+            response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            response.setHeader("Pragma", "no-cache");
+            response.setHeader("Expires", "0");
+            response.flushBuffer();
             
         } catch (Exception e) {
             log.error("Error redirecting for shortCode: {}", shortCode, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "Failed to redirect: " + e.getMessage()));
+            response.sendError(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Redirect failed");
         }
     }
     
@@ -216,9 +212,7 @@ public class UrlShortenerController {
     
     private boolean isValidUrl(String url) {
         try {
-            // Try to create URI
             new URI(url);
-            // Check if it has a valid scheme
             return url.startsWith("http://") || url.startsWith("https://");
         } catch (Exception e) {
             return false;
