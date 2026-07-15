@@ -1,15 +1,17 @@
 package com.urlshortener.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 @Service
+@ConditionalOnClass(StringRedisTemplate.class) 
 public class RedisService {
     
-    @Autowired
+    @Autowired(required = false)
     private StringRedisTemplate redisTemplate;
     
     private static final Duration DEFAULT_TTL = Duration.ofHours(24);
